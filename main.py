@@ -90,10 +90,7 @@ def format_otp_msg(record: dict, source: str = "lamix") -> tuple[str, str]:
 
     mask = emoji_api
 
-    # Add source tag
-    src_tag = "🔵 LMX" if source == "lamix" else "🟣 TW"
-
-    text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} Not Bang Toyib {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>\n{src_tag}"
+    text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} Not Bang Toyib {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>"
     return text, otp
 
 
@@ -290,10 +287,9 @@ async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["📱 *10 OTP Terakhir:*\n"]
     for i, r in enumerate(last10, 1):
         t = r.get("time", "")[:16].replace("T", " ")
-        src = "🔵" if r.get("_source") == "lamix" else "🟣"
         num = r.get("number", "?")
         otp = extract_otp(r.get("content", ""))
-        lines.append(f"`{i}.` {src} `{t}` | `+{num}` | 🔑 `{otp}`")
+        lines.append(f"`{i}.` `{t}` | `+{num}` | 🔑 `{otp}`")
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
