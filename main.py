@@ -39,6 +39,7 @@ logger = logging.getLogger("otp-bot")
 # ── State ────────────────────────────────────────────────────
 lamix_client = LamixClient()
 tw_client = ThirdWaveClient()
+chat_ids_list = [cid.strip() for cid in TELEGRAM_CHAT_ID.split(",") if cid.strip()]
 seen_keys: set = set()
 otp_history: list = []
 lamix_poll_count: int = 0
@@ -128,7 +129,6 @@ async def poll_lamix(app: Application) -> None:
         return
 
     bot: Bot = app.bot
-    chat_id = TELEGRAM_CHAT_ID
 
     while True:
         try:
@@ -150,9 +150,10 @@ async def poll_lamix(app: Application) -> None:
                     otp_history.append(r)
                     new_msgs.append(r)
 
-            if new_msgs and auto_forward and chat_id:
+            if new_msgs and auto_forward and chat_ids_list:
                 for msg in new_msgs:
-                    await send_otp_to_telegram(bot, chat_id, msg, "lamix")
+                    for cid in chat_ids_list:
+                        await send_otp_to_telegram(bot, cid, msg, "lamix")
 
             if new_msgs:
                 logger.info(f"Lamix Poll #{lamix_poll_count}: {len(new_msgs)} new OTP(s)")
@@ -174,7 +175,6 @@ async def poll_thirdwave(app: Application) -> None:
         return
 
     bot: Bot = app.bot
-    chat_id = TELEGRAM_CHAT_ID
 
     while True:
         try:
@@ -208,9 +208,10 @@ async def poll_thirdwave(app: Application) -> None:
                     otp_history.append(normalized)
                     new_msgs.append(normalized)
 
-            if new_msgs and auto_forward and chat_id:
+            if new_msgs and auto_forward and chat_ids_list:
                 for msg in new_msgs:
-                    await send_otp_to_telegram(bot, chat_id, msg, "thirdwave")
+                    for cid in chat_ids_list:
+                        await send_otp_to_telegram(bot, cid, msg, "thirdwave")
 
             if new_msgs:
                 logger.info(f"ThirdWave Poll #{tw_poll_count}: {len(new_msgs)} new OTP(s)")
@@ -337,26 +338,27 @@ async def post_init(app: Application):
     asyncio.create_task(poll_thirdwave(app))
     logger.info("ThirdWave polling task started")
 
-    if TELEGRAM_CHAT_ID:
+    if chat_ids_list:
         panels_active = []
         if LAMIX_API_KEY:
             panels_active.append("🔵 Lamix")
         if THIRDWAVE_API_KEY:
             panels_active.append("🟣 ThirdWave")
 
-        try:
-            await app.bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=(
-                    "🟢 *OTP Bot Started!*\n\n"
-                    f"📡 Panels: {', '.join(panels_active)}\n"
-                    f"⏱️ Polling every `{LAMIX_POLL_INTERVAL}s`\n\n"
-                    "Ketik /help untuk daftar command."
-                ),
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        except Exception as e:
-            logger.error(f"Startup msg error: {e}")
+        for cid in chat_ids_list:
+            try:
+                await app.bot.send_message(
+                    chat_id=cid,
+                    text=(
+                        "🟢 *OTP Bot Started!*\n\n"
+                        f"📡 Panels: {', '.join(panels_active)}\n"
+                        f"⏱️ Polling every `{LAMIX_POLL_INTERVAL}s`\n\n"
+                        "Ketik /help untuk daftar command."
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except Exception as e:
+                logger.error(f"Startup msg error for {cid}: {e}")
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
