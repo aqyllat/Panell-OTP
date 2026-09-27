@@ -73,7 +73,7 @@ def get_language(content: str) -> str:
     return "#EN"
 
 def format_otp_msg(record: dict, source: str = "lamix") -> tuple[str, str]:
-    num = record.get("number", "")
+    num = str(record.get("number", "")).lstrip("+").strip()
     content = record.get("content", "") or record.get("message", "") or record.get("body", "") or ""
 
     flag, code = get_country_info(num)
