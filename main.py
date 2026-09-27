@@ -28,6 +28,7 @@ from config import (
 )
 from lamix_client import LamixClient
 from thirdwave_client import ThirdWaveClient
+from country_codes import get_country_info
 
 logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -60,39 +61,7 @@ def extract_otp(text: str) -> str:
     return "N/A"
 
 # ── Format Message ──────────────────────────────────────────
-def get_country_info(num: str) -> tuple:
-    if num.startswith("236"): return "🇨🇫", "CF"
-    if num.startswith("972") or num.startswith("970"): return "🇮🇱", "IL"
-    if num.startswith("51"): return "🇵🇪", "PE"
-    if num.startswith("62"): return "🇮🇩", "ID"
-    if num.startswith("55"): return "🇧🇷", "BR"
-    if num.startswith("1"): return "🇺🇸", "US"
-    if num.startswith("44"): return "🇬🇧", "UK"
-    if num.startswith("7"): return "🇷🇺", "RU"
-    if num.startswith("27"): return "🇿🇦", "ZA"
-    if num.startswith("234"): return "🇳🇬", "NG"
-    if num.startswith("254"): return "🇰🇪", "KE"
-    if num.startswith("52"): return "🇲🇽", "MX"
-    if num.startswith("54"): return "🇦🇷", "AR"
-    if num.startswith("57"): return "🇨🇴", "CO"
-    if num.startswith("56"): return "🇨🇱", "CL"
-    if num.startswith("383"): return "🇽🇰", "XK"
-    if num.startswith("86"): return "🇨🇳", "CN"
-    if num.startswith("91"): return "🇮🇳", "IN"
-    if num.startswith("63"): return "🇵🇭", "PH"
-    if num.startswith("84"): return "🇻🇳", "VN"
-    if num.startswith("66"): return "🇹🇭", "TH"
-    if num.startswith("60"): return "🇲🇾", "MY"
-    if num.startswith("49"): return "🇩🇪", "DE"
-    if num.startswith("33"): return "🇫🇷", "FR"
-    if num.startswith("34"): return "🇪🇸", "ES"
-    if num.startswith("39"): return "🇮🇹", "IT"
-    if num.startswith("90"): return "🇹🇷", "TR"
-    if num.startswith("20"): return "🇪🇬", "EG"
-    if num.startswith("212"): return "🇲🇦", "MA"
-    if num.startswith("92"): return "🇵🇰", "PK"
-    if num.startswith("880"): return "🇧🇩", "BD"
-    return "🌍", "UN"
+from country_codes import get_country_info
 
 def get_language(content: str) -> str:
     c = content.lower()
