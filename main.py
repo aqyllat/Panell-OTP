@@ -26,12 +26,16 @@ from config import (
     MARKO_USERNAME,
     MARKO_PASSWORD,
     MARKO_POLL_INTERVAL,
+    VORN_USERNAME,
+    VORN_PASSWORD,
+    VORN_POLL_INTERVAL,
     TELEGRAM_GROUP_LINK,
     TELEGRAM_DISCUSS_LINK,
 )
 from lamix_client import LamixClient
 from thirdwave_client import ThirdWaveClient
 from marko_client import MarkoClient
+from vorn_client import VornClient
 from country_codes import get_country_info
 
 logging.basicConfig(
@@ -44,12 +48,14 @@ logger = logging.getLogger("otp-bot")
 lamix_client = LamixClient()
 tw_client = ThirdWaveClient()
 marko_client = MarkoClient(MARKO_USERNAME, MARKO_PASSWORD) if MARKO_USERNAME else None
+vorn_client = VornClient(VORN_USERNAME, VORN_PASSWORD) if VORN_USERNAME else None
 chat_ids_list = [cid.strip() for cid in TELEGRAM_CHAT_ID.split(",") if cid.strip()]
 seen_keys: set = set()
 otp_history: list = []
 lamix_poll_count: int = 0
 tw_poll_count: int = 0
 marko_poll_count: int = 0
+vorn_poll_count: int = 0
 auto_forward: bool = True
 bot_start_time: datetime = datetime.now(timezone.utc)
 
@@ -269,6 +275,48 @@ async def poll_marko(app: Application) -> None:
 
         await asyncio.sleep(MARKO_POLL_INTERVAL)
 
+async def poll_vorn(app: Application) -> None:
+    global vorn_poll_count
+    if not vorn_client:
+        logger.info("Vorn credentials not set, skipping Vorn polling")
+        return
+
+    bot: Bot = app.bot
+
+    while True:
+        try:
+            data = await vorn_client.get_messages()
+            records = data.get("records", [])
+            vorn_poll_count += 1
+
+            new_msgs = []
+            for r in records:
+                # Based on our standard format
+                key = f"vorn-{r.get('time','')}-{r.get('number','')}-{r.get('sender','')}"
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    
+                    # Update source name for display purposes
+                    r["_source"] = "vorn"
+                    otp_history.append(r)
+                    new_msgs.append(r)
+
+            if new_msgs and auto_forward and chat_ids_list:
+                for msg in new_msgs:
+                    for cid in chat_ids_list:
+                        await send_otp_to_telegram(bot, cid, msg, "vorn")
+
+            if new_msgs:
+                logger.info(f"Vorn Poll #{vorn_poll_count}: {len(new_msgs)} new OTP(s)")
+            else:
+                if vorn_poll_count % 20 == 0:
+                    logger.info(f"Vorn Poll #{vorn_poll_count}: no new messages")
+
+        except Exception as exc:
+            logger.error(f"Vorn poll error: {exc}")
+
+        await asyncio.sleep(VORN_POLL_INTERVAL)
+
 
 # ── Bot Commands ────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -279,6 +327,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         panels.append(f"🟣 ThirdWave: `...{THIRDWAVE_API_KEY[-8:]}`")
     if MARKO_USERNAME:
         panels.append(f"🟠 Marko: `{MARKO_USERNAME}`")
+    if VORN_USERNAME:
+        panels.append(f"🟡 Vorn: `{VORN_USERNAME}`")
 
     text = (
         "🤖 *OTP Monitor Bot*\n\n"
@@ -309,6 +359,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lamix_otps = sum(1 for r in otp_history if r.get("_source") == "lamix")
     tw_otps = sum(1 for r in otp_history if r.get("_source") == "thirdwave")
     marko_otps = sum(1 for r in otp_history if r.get("_source") == "marko")
+    vorn_otps = sum(1 for r in otp_history if r.get("_source") == "vorn")
 
     text = (
         f"📊 *OTP Bot Status*\n\n"
@@ -326,6 +377,10 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"  🔄 Polls: `{marko_poll_count}`\n"
         f"  📬 OTPs: `{marko_otps}`\n"
         f"  {'🟢 Active' if MARKO_USERNAME else '⚫ Disabled'}\n\n"
+        f"🟡 *Vorn:*\n"
+        f"  🔄 Polls: `{vorn_poll_count}`\n"
+        f"  📬 OTPs: `{vorn_otps}`\n"
+        f"  {'🟢 Active' if VORN_USERNAME else '⚫ Disabled'}\n\n"
         f"📬 Total OTP: `{len(otp_history)}`\n"
         f"🎯 Tracked keys: `{len(seen_keys)}`"
     )
@@ -394,6 +449,10 @@ async def post_init(app: Application):
     asyncio.create_task(poll_marko(app))
     logger.info("Marko polling task started")
 
+    # Start Vorn polling
+    asyncio.create_task(poll_vorn(app))
+    logger.info("Vorn polling task started")
+
     if chat_ids_list:
         panels_active = []
         if LAMIX_API_KEY:
@@ -402,6 +461,8 @@ async def post_init(app: Application):
             panels_active.append("🟣 ThirdWave")
         if MARKO_USERNAME:
             panels_active.append("🟠 Marko")
+        if VORN_USERNAME:
+            panels_active.append("🟡 Vorn")
 
         for cid in chat_ids_list:
             try:

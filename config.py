@@ -15,6 +15,11 @@ MARKO_USERNAME = os.getenv("MARKO_USERNAME", "")
 MARKO_PASSWORD = os.getenv("MARKO_PASSWORD", "")
 MARKO_POLL_INTERVAL = int(os.getenv("MARKO_POLL_INTERVAL", "15"))
 
+# Vorn
+VORN_USERNAME = os.getenv("VORN_USERNAME", "")
+VORN_PASSWORD = os.getenv("VORN_PASSWORD", "")
+VORN_POLL_INTERVAL = int(os.getenv("VORN_POLL_INTERVAL", "15"))
+
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
