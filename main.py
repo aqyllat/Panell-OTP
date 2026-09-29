@@ -96,8 +96,11 @@ def format_otp_msg(record: dict, source: str = "lamix") -> tuple[str, str]:
     emoji_wa = '<tg-emoji emoji-id="5008044786121179993">🟩</tg-emoji>'
 
     mask = emoji_api
+    
+    # Bersihin enter/newline biar pesannya sebaris dan rapi
+    content_clean = " ".join(content.split())
 
-    text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} {content} {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>"
+    text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} {content_clean} {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>"
     return text, otp
 
 
