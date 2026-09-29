@@ -97,7 +97,7 @@ def format_otp_msg(record: dict, source: str = "lamix") -> tuple[str, str]:
 
     mask = emoji_api
 
-    text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} Not Bang Toyib {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>"
+    text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} {content} {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>"
     return text, otp
 
 

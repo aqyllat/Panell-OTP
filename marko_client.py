@@ -102,7 +102,9 @@ class MarkoClient:
                 # Skip the dummy footer row used by Marko's DataTable
                 if not row or not isinstance(row, list) or len(row) < 6:
                     continue
-                if isinstance(row[0], str) and row[0].startswith("0,0,0,0"):
+                if isinstance(row[0], str) and row[0].startswith("0,"):
+                    continue
+                if str(row[2]) == "0" and str(row[5]) == "0":
                     continue
                     
                 sms_text = str(row[5])
