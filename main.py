@@ -23,11 +23,15 @@ from config import (
     LAMIX_API_KEY,
     THIRDWAVE_API_KEY,
     THIRDWAVE_POLL_INTERVAL,
+    MARKO_USERNAME,
+    MARKO_PASSWORD,
+    MARKO_POLL_INTERVAL,
     TELEGRAM_GROUP_LINK,
     TELEGRAM_DISCUSS_LINK,
 )
 from lamix_client import LamixClient
 from thirdwave_client import ThirdWaveClient
+from marko_client import MarkoClient
 from country_codes import get_country_info
 
 logging.basicConfig(
@@ -39,11 +43,13 @@ logger = logging.getLogger("otp-bot")
 # ── State ────────────────────────────────────────────────────
 lamix_client = LamixClient()
 tw_client = ThirdWaveClient()
+marko_client = MarkoClient(MARKO_USERNAME, MARKO_PASSWORD) if MARKO_USERNAME else None
 chat_ids_list = [cid.strip() for cid in TELEGRAM_CHAT_ID.split(",") if cid.strip()]
 seen_keys: set = set()
 otp_history: list = []
 lamix_poll_count: int = 0
 tw_poll_count: int = 0
+marko_poll_count: int = 0
 auto_forward: bool = True
 bot_start_time: datetime = datetime.now(timezone.utc)
 
@@ -224,6 +230,45 @@ async def poll_thirdwave(app: Application) -> None:
 
         await asyncio.sleep(THIRDWAVE_POLL_INTERVAL)
 
+async def poll_marko(app: Application) -> None:
+    global marko_poll_count
+    if not marko_client:
+        logger.info("Marko credentials not set, skipping Marko polling")
+        return
+
+    bot: Bot = app.bot
+
+    while True:
+        try:
+            data = await marko_client.get_messages()
+            records = data.get("records", [])
+            marko_poll_count += 1
+
+            new_msgs = []
+            for r in records:
+                # Based on our standard format
+                key = f"marko-{r.get('time','')}-{r.get('number','')}-{r.get('sender','')}"
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    otp_history.append(r)
+                    new_msgs.append(r)
+
+            if new_msgs and auto_forward and chat_ids_list:
+                for msg in new_msgs:
+                    for cid in chat_ids_list:
+                        await send_otp_to_telegram(bot, cid, msg, "marko")
+
+            if new_msgs:
+                logger.info(f"Marko Poll #{marko_poll_count}: {len(new_msgs)} new OTP(s)")
+            else:
+                if marko_poll_count % 20 == 0:
+                    logger.info(f"Marko Poll #{marko_poll_count}: no new messages")
+
+        except Exception as exc:
+            logger.error(f"Marko poll error: {exc}")
+
+        await asyncio.sleep(MARKO_POLL_INTERVAL)
+
 
 # ── Bot Commands ────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -232,6 +277,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         panels.append(f"🔵 Lamix: `...{LAMIX_API_KEY[-8:]}`")
     if THIRDWAVE_API_KEY:
         panels.append(f"🟣 ThirdWave: `...{THIRDWAVE_API_KEY[-8:]}`")
+    if MARKO_USERNAME:
+        panels.append(f"🟠 Marko: `{MARKO_USERNAME}`")
 
     text = (
         "🤖 *OTP Monitor Bot*\n\n"
@@ -261,6 +308,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     lamix_otps = sum(1 for r in otp_history if r.get("_source") == "lamix")
     tw_otps = sum(1 for r in otp_history if r.get("_source") == "thirdwave")
+    marko_otps = sum(1 for r in otp_history if r.get("_source") == "marko")
 
     text = (
         f"📊 *OTP Bot Status*\n\n"
@@ -274,6 +322,10 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"  🔄 Polls: `{tw_poll_count}`\n"
         f"  📬 OTPs: `{tw_otps}`\n"
         f"  {'🟢 Active' if THIRDWAVE_API_KEY else '⚫ Disabled'}\n\n"
+        f"🟠 *Marko:*\n"
+        f"  🔄 Polls: `{marko_poll_count}`\n"
+        f"  📬 OTPs: `{marko_otps}`\n"
+        f"  {'🟢 Active' if MARKO_USERNAME else '⚫ Disabled'}\n\n"
         f"📬 Total OTP: `{len(otp_history)}`\n"
         f"🎯 Tracked keys: `{len(seen_keys)}`"
     )
@@ -338,12 +390,18 @@ async def post_init(app: Application):
     asyncio.create_task(poll_thirdwave(app))
     logger.info("ThirdWave polling task started")
 
+    # Start Marko polling
+    asyncio.create_task(poll_marko(app))
+    logger.info("Marko polling task started")
+
     if chat_ids_list:
         panels_active = []
         if LAMIX_API_KEY:
             panels_active.append("🔵 Lamix")
         if THIRDWAVE_API_KEY:
             panels_active.append("🟣 ThirdWave")
+        if MARKO_USERNAME:
+            panels_active.append("🟠 Marko")
 
         for cid in chat_ids_list:
             try:

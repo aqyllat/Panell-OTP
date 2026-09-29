@@ -10,6 +10,11 @@ THIRDWAVE_API_KEY = os.getenv("THIRDWAVE_API_KEY", "")
 THIRDWAVE_BASE_URL = os.getenv("THIRDWAVE_BASE_URL", "https://clients.thirdwave.im/api/v1")
 THIRDWAVE_POLL_INTERVAL = int(os.getenv("THIRDWAVE_POLL_INTERVAL", "15"))
 
+# Marko
+MARKO_USERNAME = os.getenv("MARKO_USERNAME", "")
+MARKO_PASSWORD = os.getenv("MARKO_PASSWORD", "")
+MARKO_POLL_INTERVAL = int(os.getenv("MARKO_POLL_INTERVAL", "15"))
+
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
