@@ -241,6 +241,8 @@ COUNTRY_CODES = [
     ("94", "🇱🇰", "LK"),  # Sri Lanka
     ("95", "🇲🇲", "MM"),  # Myanmar
     ("98", "🇮🇷", "IR"),  # Iran
+    ("76", "🇰🇿", "KZ"),  # Kazakhstan
+    ("77", "🇰🇿", "KZ"),  # Kazakhstan
 
     # 1-digit prefixes (must be last)
     ("1", "🇺🇸", "US"),   # USA / Canada (NANP)
