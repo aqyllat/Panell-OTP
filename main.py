@@ -4,6 +4,7 @@ Lamix + ThirdWave OTP Telegram Bot
 Polls Lamix & ThirdWave APIs for WhatsApp OTP messages and forwards them to Telegram.
 """
 import re
+import os
 import json
 import logging
 import asyncio
@@ -50,7 +51,43 @@ tw_client = ThirdWaveClient()
 marko_client = MarkoClient(MARKO_USERNAME, MARKO_PASSWORD) if MARKO_USERNAME else None
 vorn_client = VornClient(VORN_USERNAME, VORN_PASSWORD) if VORN_USERNAME else None
 chat_ids_list = [cid.strip() for cid in TELEGRAM_CHAT_ID.split(",") if cid.strip()]
+
 seen_keys: set = set()
+# Load existing keys if bot restarted
+try:
+    if os.path.exists("seen_keys.txt"):
+        with open("seen_keys.txt", "r") as f:
+            seen_keys = set(line.strip() for line in f if line.strip())
+except Exception as e:
+    logger.error(f"Failed to load seen_keys: {e}")
+
+def save_seen_key(key: str):
+    if key in seen_keys:
+        return
+    seen_keys.add(key)
+    try:
+        with open("seen_keys.txt", "a") as f:
+            f.write(key + "\n")
+    except:
+        pass
+
+def is_message_recent(ts_str: str, max_minutes=5) -> bool:
+    """Check if message is recent (within max_minutes) handling various timezones."""
+    if not ts_str: return True
+    try:
+        clean_ts = str(ts_str).replace("T", " ").split(".")[0].replace("Z", "").strip()
+        msg_time = datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S")
+        
+        now_utc = datetime.utcnow()
+        # Common offsets: UTC(0), WIB(7), CET(1), CEST(2)
+        for offset in [0, 7, 1, 2, 8, -4, -5]:
+            now_local = now_utc + timedelta(hours=offset)
+            if abs((now_local - msg_time).total_seconds()) <= max_minutes * 60:
+                return True
+        return False
+    except:
+        return True # Fallback
+
 otp_history: list = []
 lamix_poll_count: int = 0
 tw_poll_count: int = 0
@@ -58,6 +95,52 @@ marko_poll_count: int = 0
 vorn_poll_count: int = 0
 auto_forward: bool = True
 bot_start_time: datetime = datetime.now(timezone.utc)
+
+# ── Watchdog Heartbeat ──────────────────────────────────────
+last_heartbeat: dict = {}  # panel_name -> datetime (last successful poll)
+WATCHDOG_TIMEOUT = 180  # 3 minutes without polling = dead
+
+def heartbeat(panel: str):
+    """Update heartbeat timestamp for a panel."""
+    last_heartbeat[panel] = datetime.now(timezone.utc)
+
+async def watchdog(app: Application):
+    """Kill process if any active panel stops polling for too long."""
+    await asyncio.sleep(60)  # Give panels time to start up
+    
+    while True:
+        await asyncio.sleep(60)
+        now = datetime.now(timezone.utc)
+        
+        panels_to_check = {}
+        if LAMIX_API_KEY:
+            panels_to_check["lamix"] = "Lamix"
+        if THIRDWAVE_API_KEY:
+            panels_to_check["thirdwave"] = "ThirdWave"
+        if MARKO_USERNAME:
+            panels_to_check["marko"] = "Marko"
+        if VORN_USERNAME:
+            panels_to_check["vorn"] = "Vorn"
+        
+        for key, name in panels_to_check.items():
+            last = last_heartbeat.get(key)
+            if last is None:
+                continue  # Hasn't started yet
+            diff = (now - last).total_seconds()
+            if diff > WATCHDOG_TIMEOUT:
+                logger.error(f"🚨 WATCHDOG: {name} hasn't polled in {int(diff)}s! Force restarting...")
+                # Notify telegram before dying
+                try:
+                    for cid in chat_ids_list:
+                        await app.bot.send_message(
+                            chat_id=cid,
+                            text=f"🚨 *Bot Auto-Restart*\n\n⚠️ Panel `{name}` stuck selama `{int(diff)}s`.\n🔄 Restarting...",
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+                except:
+                    pass
+                await asyncio.sleep(2)
+                os._exit(1)  # Force kill → Railway auto-restart
 
 # ── OTP Extraction ──────────────────────────────────────────
 OTP_RE = [
@@ -152,15 +235,17 @@ async def poll_lamix(app: Application) -> None:
             data = await lamix_client.get_messages(params_from, params_to)
             records = data.get("records", [])
             lamix_poll_count += 1
+            heartbeat("lamix")
 
             new_msgs = []
             for r in records:
                 key = f"lamix-{r.get('time','')}-{r.get('number','')}"
                 if key not in seen_keys:
-                    seen_keys.add(key)
+                    save_seen_key(key)
                     r["_source"] = "lamix"
                     otp_history.append(r)
-                    new_msgs.append(r)
+                    if is_message_recent(r.get("time", ""), max_minutes=5):
+                        new_msgs.append(r)
 
             if new_msgs and auto_forward and chat_ids_list:
                 for msg in new_msgs:
@@ -193,6 +278,7 @@ async def poll_thirdwave(app: Application) -> None:
             data = await tw_client.get_traffic(page=1, page_size=50)
             rows = data.get("rows", [])
             tw_poll_count += 1
+            heartbeat("thirdwave")
 
             new_msgs = []
             for r in rows:
@@ -216,9 +302,10 @@ async def poll_thirdwave(app: Application) -> None:
 
                 key = f"tw-{rec_id}"
                 if key not in seen_keys:
-                    seen_keys.add(key)
+                    save_seen_key(key)
                     otp_history.append(normalized)
-                    new_msgs.append(normalized)
+                    if is_message_recent(ts, max_minutes=5):
+                        new_msgs.append(normalized)
 
             if new_msgs and auto_forward and chat_ids_list:
                 for msg in new_msgs:
@@ -249,15 +336,17 @@ async def poll_marko(app: Application) -> None:
             data = await marko_client.get_messages()
             records = data.get("records", [])
             marko_poll_count += 1
+            heartbeat("marko")
 
             new_msgs = []
             for r in records:
                 # Based on our standard format
                 key = f"marko-{r.get('time','')}-{r.get('number','')}-{r.get('sender','')}"
                 if key not in seen_keys:
-                    seen_keys.add(key)
+                    save_seen_key(key)
                     otp_history.append(r)
-                    new_msgs.append(r)
+                    if is_message_recent(r.get("time", ""), max_minutes=5):
+                        new_msgs.append(r)
 
             if new_msgs and auto_forward and chat_ids_list:
                 for msg in new_msgs:
@@ -288,18 +377,20 @@ async def poll_vorn(app: Application) -> None:
             data = await vorn_client.get_messages()
             records = data.get("records", [])
             vorn_poll_count += 1
+            heartbeat("vorn")
 
             new_msgs = []
             for r in records:
                 # Based on our standard format
                 key = f"vorn-{r.get('time','')}-{r.get('number','')}-{r.get('sender','')}"
                 if key not in seen_keys:
-                    seen_keys.add(key)
+                    save_seen_key(key)
                     
                     # Update source name for display purposes
                     r["_source"] = "vorn"
                     otp_history.append(r)
-                    new_msgs.append(r)
+                    if is_message_recent(r.get("time", ""), max_minutes=5):
+                        new_msgs.append(r)
 
             if new_msgs and auto_forward and chat_ids_list:
                 for msg in new_msgs:
@@ -452,6 +543,10 @@ async def post_init(app: Application):
     # Start Vorn polling
     asyncio.create_task(poll_vorn(app))
     logger.info("Vorn polling task started")
+
+    # Start Watchdog 🐕
+    asyncio.create_task(watchdog(app))
+    logger.info("Watchdog task started")
 
     if chat_ids_list:
         panels_active = []
