@@ -96,6 +96,17 @@ vorn_poll_count: int = 0
 auto_forward: bool = True
 bot_start_time: datetime = datetime.now(timezone.utc)
 
+def trim_memory():
+    """Prevent Out-Of-Memory (OOM) by capping lists."""
+    global otp_history, seen_keys
+    if len(otp_history) > 2000:
+        otp_history = otp_history[-1000:]
+    # `seen_keys` set is also trimmed if it gets ridiculously large.
+    # 50,000 strings is only a few MB, so it's safe to let it grow,
+    # but we can clear it safely if it gets insanely large.
+    if len(seen_keys) > 50000:
+        seen_keys.clear()
+
 # ── Watchdog Heartbeat ──────────────────────────────────────
 last_heartbeat: dict = {}  # panel_name -> datetime (last successful poll)
 WATCHDOG_TIMEOUT = 180  # 3 minutes without polling = dead
@@ -111,6 +122,9 @@ async def watchdog(app: Application):
     while True:
         await asyncio.sleep(60)
         now = datetime.now(timezone.utc)
+        
+        # Clean up memory occasionally
+        trim_memory()
         
         panels_to_check = {}
         if LAMIX_API_KEY:
