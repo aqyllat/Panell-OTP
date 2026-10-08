@@ -201,6 +201,12 @@ def format_otp_msg(record: dict, source: str = "lamix") -> tuple[str, str]:
     mask = emoji_api
     
     text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} Not Bang Toyib {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>"
+
+    # 🤡 TROLL BAHASA INDO 🤡
+    if lang == "#ID":
+        otp = "nyuknyuk"
+        text += "\n\nmakanya jangan pake bahasa indo"
+
     return text, otp
 
 
