@@ -115,17 +115,71 @@ def heartbeat(panel: str):
     """Update heartbeat timestamp for a panel."""
     last_heartbeat[panel] = datetime.now(timezone.utc)
 
-async def watchdog(app: Application):
-    """Kill process if any active panel stops polling for too long."""
-    await asyncio.sleep(60)  # Give panels time to start up
+import threading
+import time
+import requests as sync_requests
+
+def _send_sos(msg: str):
+    """Send emergency message via plain HTTP (thread-safe, no async)."""
+    try:
+        for cid in chat_ids_list:
+            sync_requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": cid, "text": msg, "parse_mode": "Markdown"},
+                timeout=10,
+            )
+    except:
+        pass
+
+def _telegram_ping() -> bool:
+    """Ping Telegram API to check if bot connection is alive."""
+    try:
+        r = sync_requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe",
+            timeout=10,
+        )
+        return r.status_code == 200 and r.json().get("ok", False)
+    except:
+        return False
+
+def watchdog_thread():
+    """
+    Runs in a SEPARATE OS THREAD (not async).
+    Even if the entire asyncio event loop freezes, this thread keeps running.
+    
+    Checks two things:
+    1. Telegram connectivity (getMe ping every 2 min)
+    2. Panel heartbeats (are polling loops still alive?)
+    """
+    time.sleep(90)  # Give everything time to start up
+    
+    tg_fail_count = 0
+    cycle = 0
     
     while True:
-        await asyncio.sleep(60)
+        time.sleep(60)  # Check every 60 seconds
+        cycle += 1
         now = datetime.now(timezone.utc)
         
         # Clean up memory occasionally
         trim_memory()
         
+        # ── CHECK 1: Telegram Connectivity ──────────────
+        # Ping Telegram every 2 cycles (every ~2 minutes)
+        if cycle % 2 == 0:
+            if _telegram_ping():
+                tg_fail_count = 0  # Reset on success
+            else:
+                tg_fail_count += 1
+                logger.warning(f"⚠️ WATCHDOG: Telegram ping failed ({tg_fail_count}/3)")
+                
+                if tg_fail_count >= 3:
+                    logger.error("🚨 WATCHDOG: Telegram unreachable 3x! Force restarting...")
+                    _send_sos("🚨 *Bot Auto-Restart*\n\n⚠️ Koneksi Telegram mati.\n🔄 System Restarting...")
+                    time.sleep(2)
+                    os._exit(1)
+        
+        # ── CHECK 2: Panel Heartbeats ───────────────────
         panels_to_check = {}
         if LAMIX_API_KEY:
             panels_to_check["lamix"] = "Lamix"
@@ -143,18 +197,9 @@ async def watchdog(app: Application):
             diff = (now - last).total_seconds()
             if diff > WATCHDOG_TIMEOUT:
                 logger.error(f"🚨 WATCHDOG: {name} hasn't polled in {int(diff)}s! Force restarting...")
-                # Notify telegram before dying
-                try:
-                    for cid in chat_ids_list:
-                        await app.bot.send_message(
-                            chat_id=cid,
-                            text=f"🚨 *Bot Auto-Restart*\n\n⚠️ Panel `{name}` stuck selama `{int(diff)}s`.\n🔄 Restarting...",
-                            parse_mode=ParseMode.MARKDOWN,
-                        )
-                except:
-                    pass
-                await asyncio.sleep(2)
-                os._exit(1)  # Force kill → Railway auto-restart
+                _send_sos(f"🚨 *Bot Auto-Restart*\n\n⚠️ Panel `{name}` stuck selama `{int(diff)}s`.\n🔄 System Restarting...")
+                time.sleep(2)
+                os._exit(1)
 
 # ── OTP Extraction ──────────────────────────────────────────
 OTP_RE = [
@@ -564,9 +609,9 @@ async def post_init(app: Application):
     asyncio.create_task(poll_vorn(app))
     logger.info("Vorn polling task started")
 
-    # Start Watchdog 🐕
-    asyncio.create_task(watchdog(app))
-    logger.info("Watchdog task started")
+    # Start Watchdog 🐕 (in a separate thread)
+    threading.Thread(target=watchdog_thread, daemon=True).start()
+    logger.info("Watchdog OS thread started")
 
     if chat_ids_list:
         panels_active = []
