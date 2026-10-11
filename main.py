@@ -260,18 +260,17 @@ def format_otp_msg(record: dict, source: str = "lamix") -> tuple[str, str]:
     last4 = num[-4:] if len(num) >= 9 else num
 
     # Custom Emojis
-    emoji_api = '<tg-emoji emoji-id="5334964352229321286">🔥</tg-emoji>'
-    emoji_ketawa = '<tg-emoji emoji-id="5334665890656954850">😂</tg-emoji>'
+    emoji_toyib = '<tg-emoji emoji-id="6222048087251101397">✨</tg-emoji>'
     emoji_wa = '<tg-emoji emoji-id="5008044786121179993">🟩</tg-emoji>'
 
-    mask = emoji_api
+    mask = emoji_toyib
     
-    text = f"{flag} {code} | WA {emoji_wa} {prefix} {mask} {last4} {lang}\n{emoji_ketawa} Not Bang Toyib {emoji_ketawa}\nPrefix: <tg-spoiler>{prefix}</tg-spoiler>"
+    text = f"{flag} <b>{code}</b> {emoji_wa} <b>{prefix}</b> {mask} <b>{last4}</b> <b>{lang}</b>\n<b>Prefix:</b> <tg-spoiler><b>{prefix}</b></tg-spoiler>"
 
     # 🤡 TROLL BAHASA INDO 🤡
     if lang == "#ID":
         otp = "nyuknyuk"
-        text += "\n\nmakanya jangan pake bahasa indo"
+        text += "\n\n<b>makanya jangan pake bahasa indo</b>"
 
     return text, otp
 
