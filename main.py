@@ -118,6 +118,27 @@ def heartbeat(panel: str):
 import threading
 import time
 import requests as sync_requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"status":"ok","bot":"otp-toyib"}')
+
+    def log_message(self, format, *args):
+        # Mute healthcheck logs to keep Railway console clean
+        pass
+
+def run_health_server():
+    port = int(os.environ.get("PORT", "8080"))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info(f"Health check HTTP server listening on 0.0.0.0:{port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Failed to start health check server: {e}")
 
 def _send_sos(msg: str):
     """Send emergency message via plain HTTP (thread-safe, no async)."""
@@ -648,6 +669,9 @@ def main():
         return
 
     logger.info("Starting Multi-Panel OTP Telegram Bot...")
+
+    # Start HTTP Health Server in background daemon thread for Railway & Uptime monitoring
+    threading.Thread(target=run_health_server, daemon=True).start()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
