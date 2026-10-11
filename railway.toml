@@ -4,5 +4,3 @@ builder = "nixpacks"
 [deploy]
 startCommand = "python main.py"
 restartPolicyType = "ALWAYS"
-healthcheckPath = "/health"
-healthcheckTimeout = 100

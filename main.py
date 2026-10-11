@@ -117,110 +117,15 @@ def heartbeat(panel: str):
 
 import threading
 import time
-import requests as sync_requests
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"status":"ok","bot":"otp-toyib"}')
-
-    def log_message(self, format, *args):
-        # Mute healthcheck logs to keep Railway console clean
-        pass
-
-def run_health_server():
-    port = int(os.environ.get("PORT", "8080"))
-    try:
-        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-        logger.info(f"Health check HTTP server listening on 0.0.0.0:{port}")
-        server.serve_forever()
-    except Exception as e:
-        logger.error(f"Failed to start health check server: {e}")
-
-def _send_sos(msg: str):
-    """Send emergency message via plain HTTP (thread-safe, no async)."""
-    try:
-        for cid in chat_ids_list:
-            sync_requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": cid, "text": msg, "parse_mode": "Markdown"},
-                timeout=10,
-            )
-    except:
-        pass
-
-def _telegram_ping() -> bool:
-    """Ping Telegram API to check if bot connection is alive."""
-    try:
-        r = sync_requests.get(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe",
-            timeout=10,
-        )
-        return r.status_code == 200 and r.json().get("ok", False)
-    except:
-        return False
-
-def watchdog_thread():
-    """
-    Runs in a SEPARATE OS THREAD (not async).
-    Even if the entire asyncio event loop freezes, this thread keeps running.
-    
-    Checks two things:
-    1. Telegram connectivity (getMe ping every 2 min)
-    2. Panel heartbeats (are polling loops still alive?)
-    """
-    time.sleep(90)  # Give everything time to start up
-    
-    tg_fail_count = 0
-    cycle = 0
-    
+def background_maintenance():
+    """Background thread to periodically clean memory and prevent OOM."""
     while True:
-        time.sleep(60)  # Check every 60 seconds
-        cycle += 1
-        now = datetime.now(timezone.utc)
-        
-        # Clean up memory occasionally
-        trim_memory()
-        
-        # ── CHECK 1: Telegram Connectivity ──────────────
-        # Ping Telegram every 2 cycles (every ~2 minutes)
-        if cycle % 2 == 0:
-            if _telegram_ping():
-                tg_fail_count = 0  # Reset on success
-            else:
-                tg_fail_count += 1
-                logger.warning(f"⚠️ WATCHDOG: Telegram ping failed ({tg_fail_count}/3)")
-                
-                if tg_fail_count >= 3:
-                    logger.error("🚨 WATCHDOG: Telegram unreachable 3x! Force restarting...")
-                    _send_sos("🚨 *Bot Auto-Restart*\n\n⚠️ Koneksi Telegram mati.\n🔄 System Restarting...")
-                    time.sleep(2)
-                    os._exit(1)
-        
-        # ── CHECK 2: Panel Heartbeats ───────────────────
-        panels_to_check = {}
-        if LAMIX_API_KEY:
-            panels_to_check["lamix"] = "Lamix"
-        if THIRDWAVE_API_KEY:
-            panels_to_check["thirdwave"] = "ThirdWave"
-        if MARKO_USERNAME:
-            panels_to_check["marko"] = "Marko"
-        if VORN_USERNAME:
-            panels_to_check["vorn"] = "Vorn"
-        
-        for key, name in panels_to_check.items():
-            last = last_heartbeat.get(key)
-            if last is None:
-                continue  # Hasn't started yet
-            diff = (now - last).total_seconds()
-            if diff > WATCHDOG_TIMEOUT:
-                logger.error(f"🚨 WATCHDOG: {name} hasn't polled in {int(diff)}s! Force restarting...")
-                _send_sos(f"🚨 *Bot Auto-Restart*\n\n⚠️ Panel `{name}` stuck selama `{int(diff)}s`.\n🔄 System Restarting...")
-                time.sleep(2)
-                os._exit(1)
+        time.sleep(60)
+        try:
+            trim_memory()
+        except Exception:
+            pass
 
 # ── OTP Extraction ──────────────────────────────────────────
 OTP_RE = [
@@ -629,9 +534,9 @@ async def post_init(app: Application):
     asyncio.create_task(poll_vorn(app))
     logger.info("Vorn polling task started")
 
-    # Start Watchdog 🐕 (in a separate thread)
-    threading.Thread(target=watchdog_thread, daemon=True).start()
-    logger.info("Watchdog OS thread started")
+    # Start Background Maintenance Thread (cleans RAM memory safely)
+    threading.Thread(target=background_maintenance, daemon=True).start()
+    logger.info("Background maintenance thread started")
 
     if chat_ids_list:
         panels_active = []
@@ -668,9 +573,6 @@ def main():
         return
 
     logger.info("Starting Multi-Panel OTP Telegram Bot...")
-
-    # Start HTTP Health Server in background daemon thread for Railway & Uptime monitoring
-    threading.Thread(target=run_health_server, daemon=True).start()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
