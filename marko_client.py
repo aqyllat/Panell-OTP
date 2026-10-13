@@ -65,30 +65,38 @@ class MarkoClient:
                 return {"records": []}
         
         try:
-            # Fetch today's CDR
-            now = datetime.now()
-            d_start = now.strftime("%Y-%m-%d 00:00:00")
-            d_end = now.strftime("%Y-%m-%d 23:59:59")
-            
-            url = f"{self.base_url}/agent/res/data_smscdr.php"
-            params = {
-                "fdate1": d_start,
-                "fdate2": d_end,
-                "fg": "0"
-            }
-            
-            # data_smscdr requires XMLHttpRequest header
+            # 1. Fetch SMSCDRReports page to obtain dynamic sAjaxSource containing active sesskey
+            r_page = await self.client.get(f"{self.base_url}/agent/SMSCDRReports")
+            if "login" in str(r_page.url) or "What is" in r_page.text:
+                logger.info("Marko: Session expired, re-logging in...")
+                self.is_logged_in = False
+                success = await self.login()
+                if not success:
+                    return {"records": []}
+                r_page = await self.client.get(f"{self.base_url}/agent/SMSCDRReports")
+
+            # Extract sAjaxSource containing active sesskey and date parameters
+            m = re.search(r'"sAjaxSource":\s*"([^"]+)"', r_page.text)
+            if m:
+                ajax_url = m.group(1).lstrip("/")
+                if not ajax_url.startswith("http"):
+                    ajax_url = f"{self.base_url}/agent/{ajax_url}"
+            else:
+                now = datetime.now()
+                d_start = now.strftime("%Y-%m-%d 00:00:00")
+                d_end = now.strftime("%Y-%m-%d 23:59:59")
+                ajax_url = f"{self.base_url}/agent/res/data_smscdr.php?fdate1={d_start}&fdate2={d_end}&fg=0"
+
             req_headers = {
                 "X-Requested-With": "XMLHttpRequest", 
                 "Referer": f"{self.base_url}/agent/SMSCDRReports"
             }
             
-            r = await self.client.get(url, params=params, headers=req_headers)
+            r = await self.client.get(ajax_url, headers=req_headers)
             
-            # Check if session expired
-            if "Direct Script Access Not Allowed" in r.text or r.status_code != 200:
-                logger.info("Marko: Session might be expired, re-logging in...")
-                self.is_logged_in = False
+            # Check if session expired or empty
+            if "Direct Script Access Not Allowed" in r.text or r.status_code != 200 or not r.text.strip():
+                logger.warning("Marko: Empty or invalid response from CDR endpoint.")
                 return {"records": []}
                 
             data = r.json()
@@ -97,9 +105,7 @@ class MarkoClient:
             records = []
             for row in aaData:
                 # Based on standard DataTables: 
-                # row[0]=Date, row[1]=Range, row[2]=Number, row[3]=CLI/Sender, row[4]=Client, row[5]=SMS Message
-                
-                # Skip the dummy footer row used by Marko's DataTable
+                # row[0]=Date, row[1]=Range, row[2]=Number, row[3]=CLI/Sender, row[4]=Client, row[5]=SMS Message, row[6]=Currency, row[7]=Rate
                 if not row or not isinstance(row, list) or len(row) < 6:
                     continue
                 if isinstance(row[0], str) and row[0].startswith("0,"):
@@ -113,9 +119,11 @@ class MarkoClient:
                 
                 records.append({
                     "time": str(row[0]),
+                    "range": str(row[1]) if len(row) > 1 else "Marko",
                     "number": str(row[2]),
-                    "sender": str(row[3]),
+                    "sender": str(row[3]) if len(row) > 3 else "WhatsApp",
                     "content": sms_text,
+                    "payout": row[7] if len(row) > 7 else 0,
                     "_source": "marko"
                 })
             return {"records": records}
