@@ -20,6 +20,11 @@ VORN_USERNAME = os.getenv("VORN_USERNAME", "")
 VORN_PASSWORD = os.getenv("VORN_PASSWORD", "")
 VORN_POLL_INTERVAL = int(os.getenv("VORN_POLL_INTERVAL", "15"))
 
+# KSI IPRN
+KSI_API_KEY = os.getenv("KSI_API_KEY", "")
+KSI_BASE_URL = os.getenv("KSI_BASE_URL", "https://ksiiprn.com/api/v1/iprn")
+KSI_POLL_INTERVAL = int(os.getenv("KSI_POLL_INTERVAL", "60"))
+
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")

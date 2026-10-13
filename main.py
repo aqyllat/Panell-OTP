@@ -30,6 +30,8 @@ from config import (
     VORN_USERNAME,
     VORN_PASSWORD,
     VORN_POLL_INTERVAL,
+    KSI_API_KEY,
+    KSI_POLL_INTERVAL,
     TELEGRAM_GROUP_LINK,
     TELEGRAM_DISCUSS_LINK,
 )
@@ -37,6 +39,7 @@ from lamix_client import LamixClient
 from thirdwave_client import ThirdWaveClient
 from marko_client import MarkoClient
 from vorn_client import VornClient
+from ksi_client import KsiClient
 from country_codes import get_country_info
 
 logging.basicConfig(
@@ -50,6 +53,7 @@ lamix_client = LamixClient()
 tw_client = ThirdWaveClient()
 marko_client = MarkoClient(MARKO_USERNAME, MARKO_PASSWORD) if MARKO_USERNAME else None
 vorn_client = VornClient(VORN_USERNAME, VORN_PASSWORD) if VORN_USERNAME else None
+ksi_client = KsiClient() if KSI_API_KEY else None
 chat_ids_list = [cid.strip() for cid in TELEGRAM_CHAT_ID.split(",") if cid.strip()]
 
 seen_keys: set = set()
@@ -93,6 +97,7 @@ lamix_poll_count: int = 0
 tw_poll_count: int = 0
 marko_poll_count: int = 0
 vorn_poll_count: int = 0
+ksi_poll_count: int = 0
 auto_forward: bool = True
 bot_start_time: datetime = datetime.now(timezone.utc)
 
@@ -398,6 +403,47 @@ async def poll_vorn(app: Application) -> None:
 
         await asyncio.sleep(VORN_POLL_INTERVAL)
 
+async def poll_ksi(app: Application) -> None:
+    global ksi_poll_count
+    if not ksi_client:
+        logger.info("KSI API key not set, skipping KSI polling")
+        return
+
+    bot: Bot = app.bot
+
+    while True:
+        try:
+            data = await ksi_client.get_messages(page=1, per_page=50)
+            records = data.get("records", [])
+            ksi_poll_count += 1
+            heartbeat("ksi")
+
+            new_msgs = []
+            for r in records:
+                key = f"ksi-{r.get('id','')}-{r.get('time','')}-{r.get('number','')}"
+                if key not in seen_keys:
+                    save_seen_key(key)
+                    r["_source"] = "ksi"
+                    otp_history.append(r)
+                    if is_message_recent(r.get("time", ""), max_minutes=5):
+                        new_msgs.append(r)
+
+            if new_msgs and auto_forward and chat_ids_list:
+                for msg in new_msgs:
+                    for cid in chat_ids_list:
+                        await send_otp_to_telegram(bot, cid, msg, "ksi")
+
+            if new_msgs:
+                logger.info(f"KSI Poll #{ksi_poll_count}: {len(new_msgs)} new OTP(s)")
+            else:
+                if ksi_poll_count % 5 == 0:
+                    logger.info(f"KSI Poll #{ksi_poll_count}: no new messages")
+
+        except Exception as exc:
+            logger.error(f"KSI poll error: {exc}")
+
+        await asyncio.sleep(KSI_POLL_INTERVAL)
+
 
 # ── Bot Commands ────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -410,6 +456,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         panels.append(f"🟠 Marko: `{MARKO_USERNAME}`")
     if VORN_USERNAME:
         panels.append(f"🟡 Vorn: `{VORN_USERNAME}`")
+    if KSI_API_KEY:
+        panels.append(f"🔴 KSI: `...{KSI_API_KEY[-8:]}`")
 
     text = (
         "🤖 *OTP Monitor Bot*\n\n"
@@ -441,6 +489,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tw_otps = sum(1 for r in otp_history if r.get("_source") == "thirdwave")
     marko_otps = sum(1 for r in otp_history if r.get("_source") == "marko")
     vorn_otps = sum(1 for r in otp_history if r.get("_source") == "vorn")
+    ksi_otps = sum(1 for r in otp_history if r.get("_source") == "ksi")
 
     text = (
         f"📊 *OTP Bot Status*\n\n"
@@ -462,6 +511,10 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"  🔄 Polls: `{vorn_poll_count}`\n"
         f"  📬 OTPs: `{vorn_otps}`\n"
         f"  {'🟢 Active' if VORN_USERNAME else '⚫ Disabled'}\n\n"
+        f"🔴 *KSI:*\n"
+        f"  🔄 Polls: `{ksi_poll_count}`\n"
+        f"  📬 OTPs: `{ksi_otps}`\n"
+        f"  {'🟢 Active' if KSI_API_KEY else '⚫ Disabled'}\n\n"
         f"📬 Total OTP: `{len(otp_history)}`\n"
         f"🎯 Tracked keys: `{len(seen_keys)}`"
     )
@@ -534,6 +587,10 @@ async def post_init(app: Application):
     asyncio.create_task(poll_vorn(app))
     logger.info("Vorn polling task started")
 
+    # Start KSI polling
+    asyncio.create_task(poll_ksi(app))
+    logger.info("KSI polling task started")
+
     # Start Background Maintenance Thread (cleans RAM memory safely)
     threading.Thread(target=background_maintenance, daemon=True).start()
     logger.info("Background maintenance thread started")
@@ -548,6 +605,8 @@ async def post_init(app: Application):
             panels_active.append("🟠 Marko")
         if VORN_USERNAME:
             panels_active.append("🟡 Vorn")
+        if KSI_API_KEY:
+            panels_active.append("🔴 KSI")
 
         for cid in chat_ids_list:
             try:
@@ -568,8 +627,8 @@ def main():
     if not TELEGRAM_BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN not set!")
         return
-    if not LAMIX_API_KEY and not THIRDWAVE_API_KEY:
-        logger.error("No API keys set! Need at least LAMIX_API_KEY or THIRDWAVE_API_KEY")
+    if not any([LAMIX_API_KEY, THIRDWAVE_API_KEY, MARKO_USERNAME, VORN_USERNAME, KSI_API_KEY]):
+        logger.error("No panel credentials set! Need at least one panel configured")
         return
 
     logger.info("Starting Multi-Panel OTP Telegram Bot...")
