@@ -14,6 +14,12 @@ class LamixClient:
         self.base_url = LAMIX_BASE_URL.rstrip("/")
         self.api_key = LAMIX_API_KEY
         self.timeout = httpx.Timeout(15.0, connect=5.0)
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
 
     def _headers(self):
         return {
@@ -24,8 +30,9 @@ class LamixClient:
     async def _get(self, endpoint, params=None):
         """GET request with retry on 429."""
         url = f"{self.base_url}/{endpoint}"
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(3):
+        client = self._get_client()
+        for attempt in range(3):
+            try:
                 resp = await client.get(url, headers=self._headers(), params=params)
                 if resp.status_code == 429:
                     retry = int(resp.headers.get("Retry-After", "5"))
@@ -34,6 +41,11 @@ class LamixClient:
                     continue
                 resp.raise_for_status()
                 return resp.json()
+            except Exception as e:
+                if attempt == 2:
+                    logger.error(f"Lamix request error: {e}")
+                    raise
+                await asyncio.sleep(1)
         return {"records": [], "count": 0}
 
     async def get_messages(self, from_ts, to_ts, limit=500, cli=None):

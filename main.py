@@ -122,6 +122,32 @@ def heartbeat(panel: str):
 
 import threading
 import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"status":"ok","service":"otp-bot"}')
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        # Mute healthcheck logs to keep console clean
+        pass
+
+def run_health_server():
+    port_str = os.environ.get("PORT", "8080")
+    try:
+        port = int(port_str)
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info(f"Health check HTTP server listening on 0.0.0.0:{port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Health check server error: {e}")
 
 def background_maintenance():
     """Background thread to periodically clean memory and prevent OOM."""
@@ -637,7 +663,15 @@ def main():
 
     logger.info("Starting Multi-Panel OTP Telegram Bot...")
 
+    # Start HTTP Health Server for Railway container monitoring
+    threading.Thread(target=run_health_server, daemon=True).start()
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+
+    async def on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.error(f"Telegram handler error: {context.error}")
+
+    app.add_error_handler(on_telegram_error)
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))

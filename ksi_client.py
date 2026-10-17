@@ -14,6 +14,12 @@ class KsiClient:
         self.base_url = KSI_BASE_URL.rstrip("/")
         self.api_key = KSI_API_KEY
         self.timeout = httpx.Timeout(20.0, connect=10.0)
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
 
     def _headers(self):
         return {
@@ -31,17 +37,17 @@ class KsiClient:
         params = {"page": page, "per_page": per_page}
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                for attempt in range(2):
-                    resp = await client.get(url, headers=self._headers(), params=params)
-                    if resp.status_code == 429:
-                        retry = int(resp.headers.get("Retry-After", "60"))
-                        logger.warning(f"KSI rate limited (429), retry after {retry}s")
-                        return {"records": []}
+            client = self._get_client()
+            for attempt in range(2):
+                resp = await client.get(url, headers=self._headers(), params=params)
+                if resp.status_code == 429:
+                    retry = int(resp.headers.get("Retry-After", "60"))
+                    logger.warning(f"KSI rate limited (429), retry after {retry}s")
+                    return {"records": []}
 
-                    if resp.status_code != 200:
-                        logger.error(f"KSI error {resp.status_code}: {resp.text[:200]}")
-                        return {"records": []}
+                if resp.status_code != 200:
+                    logger.error(f"KSI error {resp.status_code}: {resp.text[:200]}")
+                    return {"records": []}
 
                     data = resp.json()
                     raw_items = data.get("data", [])
