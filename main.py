@@ -17,6 +17,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from telegram.constants import ParseMode
+from telegram.error import RetryAfter, BadRequest
 from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
@@ -214,7 +215,7 @@ def format_otp_msg(record: dict, source: str = "lamix") -> tuple[str, str]:
 
 # ── Send OTP to Telegram ────────────────────────────────────
 async def send_otp_to_telegram(bot: Bot, chat_id: str, record: dict, source: str = "lamix"):
-    """Format and send an OTP message to Telegram."""
+    """Format and send an OTP message to Telegram with retry, FloodWait handling, and emoji fallback."""
     text, otp = format_otp_msg(record, source)
 
     keyboard = [
@@ -226,15 +227,52 @@ async def send_otp_to_telegram(bot: Bot, chat_id: str, record: dict, source: str
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Telegram send error ({source}): {e}")
+    for attempt in range(3):
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup
+            )
+            break
+        except RetryAfter as e:
+            logger.warning(f"Telegram FloodWait on {source}: waiting {e.retry_after}s...")
+            await asyncio.sleep(e.retry_after + 1)
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+                break
+            except Exception as e2:
+                logger.error(f"Telegram retry after FloodWait failed: {e2}")
+        except BadRequest as e:
+            err_msg = str(e).lower()
+            if "entity_text_invalid" in err_msg or "can't parse entities" in err_msg or "emoji" in err_msg:
+                # Strip custom emoji tags if Telegram rejects them
+                plain_text = re.sub(r"<tg-emoji[^>]*>(.*?)</tg-emoji>", r"\1", text)
+                plain_text = re.sub(r"<[^>]+>", "", plain_text)
+                logger.warning(f"Telegram rejected emoji/formatting ({e}), retrying with plain text...")
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=plain_text,
+                        reply_markup=reply_markup
+                    )
+                    break
+                except Exception as e3:
+                    logger.error(f"Plain text fallback send failed: {e3}")
+            else:
+                logger.error(f"Telegram BadRequest ({source}): {e}")
+                break
+        except Exception as e:
+            logger.error(f"Telegram send error ({source}, attempt {attempt+1}): {e}")
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+
     await asyncio.sleep(0.5)
 
 
@@ -294,6 +332,7 @@ async def poll_thirdwave(app: Application) -> None:
         return
 
     bot: Bot = app.bot
+    fail_count = 0
 
     while True:
         try:
@@ -301,6 +340,7 @@ async def poll_thirdwave(app: Application) -> None:
             rows = data.get("items", []) or data.get("rows", [])
             tw_poll_count += 1
             heartbeat("thirdwave")
+            fail_count = 0  # Reset fail count on successful poll
 
             new_msgs = []
             for r in rows:
@@ -344,10 +384,13 @@ async def poll_thirdwave(app: Application) -> None:
                 if tw_poll_count % 20 == 0:
                     logger.info(f"ThirdWave Poll #{tw_poll_count}: no new messages")
 
-        except Exception as exc:
-            logger.error(f"ThirdWave poll error: {exc}")
+            await asyncio.sleep(THIRDWAVE_POLL_INTERVAL)
 
-        await asyncio.sleep(THIRDWAVE_POLL_INTERVAL)
+        except Exception as exc:
+            fail_count += 1
+            backoff = min(120, THIRDWAVE_POLL_INTERVAL * min(fail_count, 8))
+            logger.error(f"ThirdWave poll error (attempt {fail_count}): {exc}. Backing off for {backoff}s...")
+            await asyncio.sleep(backoff)
 
 async def poll_marko(app: Application) -> None:
     global marko_poll_count
