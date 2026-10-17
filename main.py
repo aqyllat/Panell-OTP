@@ -270,31 +270,35 @@ async def poll_thirdwave(app: Application) -> None:
 
     while True:
         try:
-            data = await tw_client.get_traffic(page=1, page_size=50)
-            rows = data.get("rows", [])
+            data = await tw_client.get_traffic(limit=50)
+            rows = data.get("items", []) or data.get("rows", [])
             tw_poll_count += 1
             heartbeat("thirdwave")
 
             new_msgs = []
             for r in rows:
-                # ThirdWave actual field names
-                num = r.get("destinationNumber", "")
-                ts = r.get("receivedAt", "")
-                content = r.get("messageBody", "")
-                rec_id = r.get("id", "")
+                # ThirdWave new fields: received_at, sender_id, range_name, range_template, number, sms, rate
+                num = r.get("number") or r.get("destinationNumber", "")
+                ts = r.get("received_at") or r.get("receivedAt", "")
+                content = r.get("sms") or r.get("messageBody", "")
+                cli = r.get("sender_id") or r.get("sourceAddress", "WhatsApp")
+                range_name = r.get("range_name") or r.get("rangeName", "ThirdWave")
+                rate = r.get("rate", 0)
+                status = r.get("status", "completed")
 
                 # Normalize record to our standard format
                 normalized = {
                     "number": str(num).lstrip("+"),
                     "content": content,
                     "time": ts,
-                    "cli": r.get("sourceAddress", "WhatsApp"),
-                    "range": r.get("rangeName", "ThirdWave"),
-                    "payout": r.get("rate", 0),
-                    "status": r.get("status", "pending"),
+                    "cli": cli,
+                    "range": range_name,
+                    "payout": rate,
+                    "status": status,
                     "_source": "thirdwave",
                 }
 
+                rec_id = r.get("id") or f"{ts}-{num}-{content[:10]}"
                 key = f"tw-{rec_id}"
                 if key not in seen_keys:
                     save_seen_key(key)

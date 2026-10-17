@@ -17,15 +17,14 @@ class ThirdWaveClient:
 
     def _headers(self):
         return {
-            "Authorization": f"Bearer {self.api_key}",
             "Accept": "application/json",
             "User-Agent": "Mozilla/5.0",
         }
 
-    async def get_traffic(self, page=1, page_size=50):
+    async def get_traffic(self, limit=50):
         """Fetch traffic/OTP messages from ThirdWave API."""
         url = f"{self.base_url}/traffic"
-        params = {"page": page, "pageSize": page_size}
+        params = {"api_key": self.api_key, "limit": limit}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(3):
                 resp = await client.get(url, headers=self._headers(), params=params)
@@ -36,4 +35,4 @@ class ThirdWaveClient:
                     continue
                 resp.raise_for_status()
                 return resp.json()
-        return {"rows": [], "total": 0}
+        return {"items": []}

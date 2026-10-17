@@ -7,7 +7,7 @@ LAMIX_POLL_INTERVAL = int(os.getenv("LAMIX_POLL_INTERVAL", "15"))
 
 # ThirdWave
 THIRDWAVE_API_KEY = os.getenv("THIRDWAVE_API_KEY", "")
-THIRDWAVE_BASE_URL = os.getenv("THIRDWAVE_BASE_URL", "https://clients.thirdwave.im/api/v1")
+THIRDWAVE_BASE_URL = os.getenv("THIRDWAVE_BASE_URL", "https://thirdwave.im/api/v1")
 THIRDWAVE_POLL_INTERVAL = int(os.getenv("THIRDWAVE_POLL_INTERVAL", "15"))
 
 # Marko
