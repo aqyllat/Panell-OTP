@@ -1,6 +1,7 @@
 import httpx
 import re
 import logging
+import time
 from datetime import datetime
 
 logger = logging.getLogger("otp-bot.marko")
@@ -10,25 +11,38 @@ class MarkoClient:
         self.base_url = "http://51.75.144.178/ints"
         self.username = username
         self.password = password
-        self.client = httpx.AsyncClient(
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Origin": "http://51.75.144.178",
-                "Referer": "http://51.75.144.178/ints/login",
-            },
-            follow_redirects=True,
-            timeout=30.0
-        )
+        self.client = None
         self.is_logged_in = False
+        self._last_fail_time = 0
+
+    def _get_client(self):
+        if self.client is None or self.client.is_closed:
+            self.client = httpx.AsyncClient(
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Origin": "http://51.75.144.178",
+                    "Referer": "http://51.75.144.178/ints/login",
+                },
+                follow_redirects=True,
+                timeout=25.0
+            )
+        return self.client
 
     async def login(self):
+        # Don't spin in a tight failure loop if credentials are wrong
+        now = time.time()
+        if now - self._last_fail_time < 60:
+            return False
+
+        client = self._get_client()
         try:
             # 1. Get Login Page & Captcha
-            r1 = await self.client.get(f"{self.base_url}/login")
+            r1 = await client.get(f"{self.base_url}/login")
             m = re.search(r'What is (\d+)\s*\+\s*(\d+)\s*=\s*\?', r1.text)
             if not m:
                 logger.error("Marko: Captcha not found on login page.")
+                self._last_fail_time = time.time()
                 return False
             
             capt = str(int(m.group(1)) + int(m.group(2)))
@@ -39,15 +53,16 @@ class MarkoClient:
                 "password": self.password,
                 "capt": capt
             }
-            r2 = await self.client.post(
+            r2 = await client.post(
                 f"{self.base_url}/signin", 
                 data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
             
             if "Invalid" in r2.text or "Error" in r2.text:
-                logger.error("Marko: Login failed! Invalid Username/Password.")
+                logger.warning("Marko: Login failed! Invalid Username/Password. Retrying in 60s...")
                 self.is_logged_in = False
+                self._last_fail_time = time.time()
                 return False
             
             logger.info("Marko: Successfully logged in.")
@@ -56,6 +71,7 @@ class MarkoClient:
             
         except Exception as e:
             logger.error(f"Marko login error: {e}")
+            self._last_fail_time = time.time()
             return False
 
     async def get_messages(self):
@@ -64,16 +80,17 @@ class MarkoClient:
             if not success:
                 return {"records": []}
         
+        client = self._get_client()
         try:
             # 1. Fetch SMSCDRReports page to obtain dynamic sAjaxSource containing active sesskey
-            r_page = await self.client.get(f"{self.base_url}/agent/SMSCDRReports")
+            r_page = await client.get(f"{self.base_url}/agent/SMSCDRReports")
             if "login" in str(r_page.url) or "What is" in r_page.text:
                 logger.info("Marko: Session expired, re-logging in...")
                 self.is_logged_in = False
                 success = await self.login()
                 if not success:
                     return {"records": []}
-                r_page = await self.client.get(f"{self.base_url}/agent/SMSCDRReports")
+                r_page = await client.get(f"{self.base_url}/agent/SMSCDRReports")
 
             # Extract sAjaxSource containing active sesskey and date parameters
             m = re.search(r'"sAjaxSource":\s*"([^"]+)"', r_page.text)
@@ -92,7 +109,7 @@ class MarkoClient:
                 "Referer": f"{self.base_url}/agent/SMSCDRReports"
             }
             
-            r = await self.client.get(ajax_url, headers=req_headers)
+            r = await client.get(ajax_url, headers=req_headers)
             
             # Check if session expired or empty
             if "Direct Script Access Not Allowed" in r.text or r.status_code != 200 or not r.text.strip():

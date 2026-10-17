@@ -101,16 +101,16 @@ ksi_poll_count: int = 0
 auto_forward: bool = True
 bot_start_time: datetime = datetime.now(timezone.utc)
 
+import gc
+
 def trim_memory():
-    """Prevent Out-Of-Memory (OOM) by capping lists."""
+    """Prevent Out-Of-Memory (OOM) by capping lists and forcing garbage collection."""
     global otp_history, seen_keys
-    if len(otp_history) > 2000:
-        otp_history = otp_history[-1000:]
-    # `seen_keys` set is also trimmed if it gets ridiculously large.
-    # 50,000 strings is only a few MB, so it's safe to let it grow,
-    # but we can clear it safely if it gets insanely large.
-    if len(seen_keys) > 50000:
-        seen_keys.clear()
+    if len(otp_history) > 1000:
+        otp_history = otp_history[-500:]
+    if len(seen_keys) > 30000:
+        seen_keys = set(list(seen_keys)[-10000:])
+    gc.collect()
 
 # ── Watchdog Heartbeat ──────────────────────────────────────
 last_heartbeat: dict = {}  # panel_name -> datetime (last successful poll)
@@ -122,7 +122,7 @@ def heartbeat(panel: str):
 
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -143,7 +143,8 @@ def run_health_server():
     port_str = os.environ.get("PORT", "8080")
     try:
         port = int(port_str)
-        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        server = ThreadingHTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        server.daemon_threads = True
         logger.info(f"Health check HTTP server listening on 0.0.0.0:{port}")
         server.serve_forever()
     except Exception as e:
@@ -598,27 +599,38 @@ async def btn_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+async def supervised_task(coro_fn, name: str, app: Application):
+    """Supervisor to auto-revive polling tasks if they ever crash."""
+    while True:
+        try:
+            await coro_fn(app)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Task {name} crashed: {e}. Auto-reviving in 5s...")
+            await asyncio.sleep(5)
+
 # ── Main ────────────────────────────────────────────────────
 async def post_init(app: Application):
     """Start polling tasks after bot initializes."""
     # Start Lamix polling
-    asyncio.create_task(poll_lamix(app))
+    asyncio.create_task(supervised_task(poll_lamix, "Lamix", app))
     logger.info("Lamix polling task started")
 
     # Start ThirdWave polling
-    asyncio.create_task(poll_thirdwave(app))
+    asyncio.create_task(supervised_task(poll_thirdwave, "ThirdWave", app))
     logger.info("ThirdWave polling task started")
 
     # Start Marko polling
-    asyncio.create_task(poll_marko(app))
+    asyncio.create_task(supervised_task(poll_marko, "Marko", app))
     logger.info("Marko polling task started")
 
     # Start Vorn polling
-    asyncio.create_task(poll_vorn(app))
+    asyncio.create_task(supervised_task(poll_vorn, "Vorn", app))
     logger.info("Vorn polling task started")
 
     # Start KSI polling
-    asyncio.create_task(poll_ksi(app))
+    asyncio.create_task(supervised_task(poll_ksi, "KSI", app))
     logger.info("KSI polling task started")
 
     # Start Background Maintenance Thread (cleans RAM memory safely)

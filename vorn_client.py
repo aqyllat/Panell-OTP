@@ -10,22 +10,28 @@ class VornClient:
         self.base_url = "http://213.32.24.208/ints"
         self.username = username
         self.password = password
-        self.client = httpx.AsyncClient(
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Origin": "http://213.32.24.208",
-                "Referer": "http://213.32.24.208/ints/login",
-            },
-            follow_redirects=True,
-            timeout=30.0
-        )
+        self.client = None
         self.is_logged_in = False
 
+    def _get_client(self):
+        if self.client is None or self.client.is_closed:
+            self.client = httpx.AsyncClient(
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Origin": "http://213.32.24.208",
+                    "Referer": "http://213.32.24.208/ints/login",
+                },
+                follow_redirects=True,
+                timeout=25.0
+            )
+        return self.client
+
     async def login(self):
+        client = self._get_client()
         try:
             # 1. Get Login Page & Captcha
-            r1 = await self.client.get(f"{self.base_url}/login")
+            r1 = await client.get(f"{self.base_url}/login")
             m = re.search(r'What is (\d+)\s*\+\s*(\d+)\s*=\s*\?', r1.text)
             if not m:
                 logger.error("Vorn: Captcha not found on login page.")
@@ -39,7 +45,7 @@ class VornClient:
                 "password": self.password,
                 "capt": capt
             }
-            r2 = await self.client.post(
+            r2 = await client.post(
                 f"{self.base_url}/signin", 
                 data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
@@ -64,16 +70,17 @@ class VornClient:
             if not success:
                 return {"records": []}
         
+        client = self._get_client()
         try:
             # 1. Fetch SMSCDRReports page to obtain dynamic sAjaxSource containing active sesskey
-            r_page = await self.client.get(f"{self.base_url}/agent/SMSCDRReports")
+            r_page = await client.get(f"{self.base_url}/agent/SMSCDRReports")
             if "login" in str(r_page.url) or "What is" in r_page.text:
                 logger.info("Vorn: Session expired, re-logging in...")
                 self.is_logged_in = False
                 success = await self.login()
                 if not success:
                     return {"records": []}
-                r_page = await self.client.get(f"{self.base_url}/agent/SMSCDRReports")
+                r_page = await client.get(f"{self.base_url}/agent/SMSCDRReports")
 
             # Extract sAjaxSource containing active sesskey and date parameters
             m = re.search(r'"sAjaxSource":\s*"([^"]+)"', r_page.text)
@@ -92,7 +99,7 @@ class VornClient:
                 "Referer": f"{self.base_url}/agent/SMSCDRReports"
             }
             
-            r = await self.client.get(ajax_url, headers=req_headers)
+            r = await client.get(ajax_url, headers=req_headers)
             
             # Check if session expired or empty
             if "Direct Script Access Not Allowed" in r.text or r.status_code != 200 or not r.text.strip():
